@@ -1,0 +1,31 @@
+{
+  "app": {
+    "title": "Control+"
+  },
+  "btn": {
+    "add": "Add"
+  },
+  "cards": {
+    "assets": "Assets",
+    "total": "Total",
+    "gain": "Gain",
+    "loss": "Loss"
+  },
+  "investments": {
+    "portfolioChartTitle": "Portfolio Evolution",
+    "allocationTitle": "Asset Allocation",
+    "tableTitle": "Investment Details"
+  },
+  "recent": {
+    "assets": "Recent Assets"
+  },
+  "fixed": {
+    "title": "Fixed-Term Simulator",
+    "startDate": "Start date",
+    "principal": "Initial capital",
+    "rate": "Estimated annual yield (%)",
+    "months": "Duration (months)",
+    "finalAmount": "Estimated final amount:",
+    "gain": "Total gain:"
+  }
+}

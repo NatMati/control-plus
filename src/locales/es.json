@@ -1,0 +1,31 @@
+{
+  "app": {
+    "title": "Control+"
+  },
+  "btn": {
+    "add": "Agregar"
+  },
+  "cards": {
+    "assets": "Activos",
+    "total": "Total",
+    "gain": "Ganancia",
+    "loss": "Pérdida"
+  },
+  "investments": {
+    "portfolioChartTitle": "Evolución del portafolio",
+    "allocationTitle": "Distribución por tipo de activo",
+    "tableTitle": "Detalle de inversiones"
+  },
+  "recent": {
+    "assets": "Activos recientes"
+  },
+  "fixed": {
+    "title": "Simulador de plazo fijo",
+    "startDate": "Inicio del plazo",
+    "principal": "Capital inicial",
+    "rate": "Rendimiento anual estimado (%)",
+    "months": "Duración (meses)",
+    "finalAmount": "Monto estimado al final:",
+    "gain": "Ganancia total:"
+  }
+}
