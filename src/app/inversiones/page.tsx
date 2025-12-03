@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
 import AddAssetModal from "@/components/AddAssetModal";
 import AssetTabs from "@/components/AssetTabs";
@@ -324,7 +324,16 @@ export default function InvestmentsPage() {
             </p>
           </div>
 
-          <AssetTabs />
+          {/* 👇 Envolvemos AssetTabs en Suspense */}
+          <Suspense
+            fallback={
+              <div className="text-xs text-slate-500">
+                Cargando pestañas...
+              </div>
+            }
+          >
+            <AssetTabs />
+          </Suspense>
         </div>
 
         {/* KPI Cards */}
@@ -401,7 +410,9 @@ export default function InvestmentsPage() {
                 <p className="text-xs font-medium text-slate-400">
                   Evolución del portafolio
                 </p>
-                <p className="text-xs text-slate-500">{currentModeLabel}</p>
+                <p className="text-xs text-slate-500">
+                  {currentModeLabel}
+                </p>
               </div>
 
               <div className="flex flex-wrap gap-2 text-xs">
@@ -519,7 +530,9 @@ export default function InvestmentsPage() {
                         portfolioMode === "BOTH") && (
                         <Line
                           type="monotone"
-                          dataKey={portfolioAsPct ? "benefitPct" : "benefit"}
+                          dataKey={
+                            portfolioAsPct ? "benefitPct" : "benefit"
+                          }
                           stroke="#22c55e"
                           dot={false}
                           name={
