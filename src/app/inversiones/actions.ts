@@ -36,7 +36,8 @@ export type InvestmentsSnapshot = {
 };
 
 export async function getInvestmentsSnapshot(): Promise<InvestmentsSnapshot> {
-  const supabase = createClient(); // 👈 YA NO lleva await
+  // ✅ createClient devuelve una Promise, así que hay que esperarla
+  const supabase = await createClient();
 
   // Intentamos obtener el usuario
   const {
