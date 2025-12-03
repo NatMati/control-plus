@@ -10,6 +10,7 @@ type UITipoMovimiento = "INGRESO" | "GASTO" | "TRANSFER";
 
 export default function NuevoMovimientoPage() {
   const router = useRouter();
+  // Ojo: mantengo la firma que ya usás hoy
   const { accounts, addMovement, addAccount } = useAccounts();
   const { currency } = useSettings();
 
@@ -30,24 +31,83 @@ export default function NuevoMovimientoPage() {
   const [newAccName, setNewAccName] = useState<string>("");
   const [newAccCurrency, setNewAccCurrency] = useState<Currency>("USD");
 
-  const addNewAccount = () => {
-  if (!newAccName.trim()) return alert("Ingresá un nombre válido");
+  /**
+   * Alta de NUEVA CUENTA
+   * - chequea duplicados por nombre+moneda
+   * - llama a addAccount (que ya tenés en tu contexto)
+   */
+  const addNewAccount = async () => {
+    const name = newAccName.trim();
+    if (!name) return alert("Ingresá un nombre válido");
 
-  addAccount({
-    name: newAccName.trim(),
-    currency: newAccCurrency,
-    // 👈 ya NO mandamos balance acá
-  });
+    // 🔍 Chequeo de duplicados (mismo nombre + misma moneda, case-insensitive)
+    const exists = accounts.some(
+      (a) =>
+        a.name.trim().toLowerCase() === name.toLowerCase() &&
+        a.currency === newAccCurrency
+    );
 
-  setNewAccName("");
+    if (exists) {
+      const confirmar = window.confirm(
+        `Ya tenés una cuenta "${name}" en ${newAccCurrency}.\n\n` +
+          "¿Querés crear otra con el mismo nombre?"
+      );
+      if (!confirmar) {
+        return; // el usuario se arrepintió
+      }
+    }
 
-  if (accounts.length === 0) {
-    setAccountId(accounts[0]?.id || "");
-    setFromId(accounts[0]?.id || "");
-    setToId(accounts[1]?.id || "");
-  }
-};
+    // Crear en servidor + contexto (según tu implementación actual)
+    await addAccount({
+      name,
+      currency: newAccCurrency,
+    });
 
+    setNewAccName("");
+
+    // Si era la primera cuenta, actualizar selects básicos
+    if (accounts.length === 0) {
+      setAccountId(accounts[0]?.id || "");
+      setFromId(accounts[0]?.id || "");
+      setToId(accounts[1]?.id || "");
+    }
+  };
+
+  /**
+   * Borrado de cuenta:
+   * - llama a /api/accounts/:id (DELETE)
+   * - recarga la página completa para que el contexto se vuelva a hidratar
+   */
+  const handleDeleteAccount = async (id: string, name: string) => {
+    const ok = window.confirm(
+      `¿Seguro que querés eliminar la cuenta "${name}"?\n\n` +
+        "Si tiene movimientos asociados, el sistema no la dejará borrar."
+    );
+    if (!ok) return;
+
+    try {
+      const res = await fetch(`/api/accounts/${id}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        console.error("Error al eliminar cuenta:", text);
+        alert(
+          "No se pudo eliminar la cuenta. " +
+            "Asegurate de que no tenga movimientos asociados."
+        );
+        return;
+      }
+
+      // Recargamos toda la app para que el AccountsProvider
+      // vuelva a leer las cuentas desde Supabase
+      window.location.reload();
+    } catch (e) {
+      console.error(e);
+      alert("Ocurrió un error al eliminar la cuenta.");
+    }
+  };
 
   const onSubmit = async () => {
     const amt = parseFloat(amount || "0");
@@ -303,6 +363,7 @@ export default function NuevoMovimientoPage() {
           </button>
         </div>
 
+        {/* Cuentas guardadas + botón Eliminar */}
         <div className="text-xs text-slate-400 mt-4">
           <span className="block mb-1 text-slate-300 font-medium">
             Cuentas guardadas:
@@ -312,9 +373,22 @@ export default function NuevoMovimientoPage() {
               Todavía no agregaste ninguna cuenta.
             </span>
           ) : (
-            <span className="text-slate-300">
-              {accounts.map((a) => a.name).join(" • ")}
-            </span>
+            <ul className="space-y-1">
+              {accounts.map((a) => (
+                <li key={a.id} className="flex items-center gap-2">
+                  <span>
+                    {a.name} ({a.currency})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteAccount(a.id, a.name)}
+                    className="text-red-400 hover:text-red-300"
+                  >
+                    Eliminar
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       </div>
