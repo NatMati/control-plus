@@ -2,7 +2,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useBudgets } from "@/context/BudgetsContext";
 import { type Currency } from "@/context/SettingsContext";
 
@@ -11,7 +11,8 @@ type MonthOption = {
   label: string; // "Noviembre de 2025"
 };
 
-export default function NuevoPresupuestoPage() {
+// 👇 Componente interno: acá vive toda la lógica con useSearchParams
+function NuevoPresupuestoInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { addBudget } = useBudgets();
@@ -200,6 +201,21 @@ export default function NuevoPresupuestoPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// 👇 Componente exportado: envuelve todo en Suspense
+export default function NuevoPresupuestoPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="p-6 text-xs text-slate-500">
+          Cargando formulario de presupuesto...
+        </div>
+      }
+    >
+      <NuevoPresupuestoInner />
+    </Suspense>
   );
 }
 
