@@ -6,8 +6,8 @@ import { SettingsProvider } from "@/context/SettingsContext";
 import { AccountsProvider } from "@/context/AccountsContext";
 import { BudgetsProvider } from "@/context/BudgetsContext";
 import { GoalsProvider } from "@/context/GoalsContext";
+import { MovementsProvider } from "@/context/MovementsContext"; // 👈 NUEVO
 import ShellWrapper from "./ShellWrapper";
-;
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({
@@ -33,9 +33,11 @@ export default function RootLayout({
         <SettingsProvider>
           <AccountsProvider>
             <BudgetsProvider>
-              <GoalsProvider>
-                <ShellWrapper>{children}</ShellWrapper>
-              </GoalsProvider>
+              <MovementsProvider> {/* 👈 ENVUELVE A Goals + Shell */}
+                <GoalsProvider>
+                  <ShellWrapper>{children}</ShellWrapper>
+                </GoalsProvider>
+              </MovementsProvider>
             </BudgetsProvider>
           </AccountsProvider>
         </SettingsProvider>

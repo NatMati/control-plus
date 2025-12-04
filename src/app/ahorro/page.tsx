@@ -1,9 +1,10 @@
 // src/app/ahorro/page.tsx
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useAccounts } from "@/context/AccountsContext";
 import { useSettings, type Currency } from "@/context/SettingsContext";
+import { useMovements } from "@/context/MovementsContext";
 import {
   PieChart,
   Pie,
@@ -33,6 +34,12 @@ const CHART_COLORS = ["#3b82f6", "#22c55e", "#a855f7", "#f97316", "#e11d48"];
 export default function AhorroPage() {
   const { accounts } = useAccounts();
   const { currency, convert, format } = useSettings();
+  const { movements } = useMovements();
+
+  // Para el selector de cuenta de metas
+  const [selectedAccountId, setSelectedAccountId] = useState<string>(
+    accounts[0]?.id ?? ""
+  );
 
   const {
     rows,
@@ -45,12 +52,38 @@ export default function AhorroPage() {
       return {
         rows: [] as Row[],
         totalBase: 0,
-        totalNativePerCurrency: {} as Record<Currency, number>,
+        totalNativePerCurrency: {
+          USD: 0,
+          EUR: 0,
+          UYU: 0,
+          ARS: 0,
+          BRL: 0,
+        } as Record<Currency, number>,
         richestAccount: undefined as Row | undefined,
         chartData: [] as ChartPoint[],
       };
     }
 
+    // 1) Calcular saldo nativo de cada cuenta a partir de los movimientos
+    const balanceByAccount: Record<string, number> = {};
+    accounts.forEach((acc) => {
+      balanceByAccount[acc.id] = 0;
+    });
+
+    movements.forEach((mov) => {
+      // Solo consideramos ingresos/gastos; las transferencias no cambian
+      // el total global y por ahora no están en BD
+      if (!mov.accountId) return;
+      if (!(mov.accountId in balanceByAccount)) return;
+
+      if (mov.type === "INGRESO") {
+        balanceByAccount[mov.accountId] += mov.amount;
+      } else if (mov.type === "GASTO") {
+        balanceByAccount[mov.accountId] -= mov.amount;
+      }
+    });
+
+    // 2) Armar filas usando esos saldos
     let totalBase = 0;
     const totalNativePerCurrency: Record<Currency, number> = {
       USD: 0,
@@ -61,18 +94,20 @@ export default function AhorroPage() {
     };
 
     const tmpRows: Row[] = accounts.map((acc) => {
-      const base = convert(acc.balance, {
+      const native = balanceByAccount[acc.id] ?? 0;
+
+      const base = convert(native, {
         from: acc.currency,
         to: currency,
       });
 
       totalBase += base;
-      totalNativePerCurrency[acc.currency] += acc.balance;
+      totalNativePerCurrency[acc.currency] += native;
 
       return {
         id: acc.id,
         name: acc.name,
-        native: acc.balance,
+        native,
         nativeCurrency: acc.currency,
         base,
         share: 0,
@@ -96,7 +131,13 @@ export default function AhorroPage() {
     }));
 
     return { rows, totalBase, totalNativePerCurrency, richestAccount, chartData };
-  }, [accounts, currency, convert]);
+  }, [accounts, movements, currency, convert]);
+
+  // Mantener seleccionado algo válido cuando cambia la lista de cuentas
+  const effectiveSelectedAccountId =
+    selectedAccountId && accounts.some((a) => a.id === selectedAccountId)
+      ? selectedAccountId
+      : accounts[0]?.id ?? "";
 
   return (
     <div className="p-6 space-y-6">
@@ -167,7 +208,7 @@ export default function AhorroPage() {
       {/* Detalle + gráfico */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
         {/* Detalle por cuenta */}
-        <div className="lg:col-span-2 rounded-xl border border-slate-800 bg-[#0f1830] overflow-hidden">
+        <div className="lg-col-span-2 rounded-xl border border-slate-800 bg-[#0f1830] overflow-hidden">
           <div className="px-4 py-3 border-b border-slate-800">
             <div className="text-sm font-medium">Detalle por cuenta</div>
             <div className="text-xs text-slate-500">
@@ -277,7 +318,7 @@ export default function AhorroPage() {
               </div>
 
               {/* Leyenda */}
-              <div className="mt-3ณฑ space-y-1">
+              <div className="mt-3 space-y-1">
                 {chartData.map((d, i) => (
                   <div
                     key={`legend-${d.name}-${i}`}
@@ -302,56 +343,53 @@ export default function AhorroPage() {
         </div>
       </div>
 
-      {/* Metas de ahorro por cuenta (usa AccountGoals) */}
+      {/* Metas de ahorro: selector + metas de UNA cuenta */}
       <div className="rounded-xl border border-slate-800 bg-[#050816] p-4 space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-sm font-medium">Metas de ahorro por cuenta</div>
+            <div className="text-sm font-medium">Metas de ahorro</div>
             <p className="text-xs text-slate-400">
               Crea objetivos como “Auto”, “PC nueva” o “Vacaciones” y asigna
               aportes desde tus movimientos.
             </p>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-slate-400">Cuenta:</span>
+            <select
+              value={effectiveSelectedAccountId}
+              onChange={(e) => setSelectedAccountId(e.target.value)}
+              className="bg-[#020617] border border-slate-700 rounded px-2 py-1 text-xs"
+            >
+              {accounts.map((acc) => (
+                <option key={acc.id} value={acc.id}>
+                  {acc.name} ({acc.currency})
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
         {accounts.length === 0 ? (
           <p className="text-xs text-slate-500">
             Primero crea al menos una cuenta. Luego podrás definir metas de
-            ahorro asociadas a cada una.
+            ahorro asociadas.
           </p>
         ) : (
-          <div className="space-y-4">
-            {accounts.map((acc) => (
-              <div
-                key={acc.id}
-                className="rounded-lg border border-slate-800 bg-[#020617] p-3"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <div className="text-xs uppercase tracking-wide text-slate-500">
-                      Cuenta
-                    </div>
-                    <div className="text-sm font-medium text-slate-100">
-                      {acc.name}
-                    </div>
-                  </div>
-                  <div className="text-right text-xs text-slate-400">
-                    Saldo actual:{" "}
-                    <span className="font-semibold">
-                      {format(
-                        convert(acc.balance, {
-                          from: acc.currency,
-                          to: currency,
-                        })
-                      )}
-                    </span>
-                  </div>
-                </div>
-
-                {/* 👇 Componente que muestra y gestiona las metas de esta cuenta */}
-                <AccountGoals accountId={acc.id} />
+          <div className="rounded-lg border border-slate-800 bg-[#020617] p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs uppercase tracking-wide text-slate-500">
+                Cuenta seleccionada
               </div>
-            ))}
+              <div className="text-sm font-medium text-slate-100">
+                {
+                  accounts.find((a) => a.id === effectiveSelectedAccountId)
+                    ?.name
+                }
+              </div>
+            </div>
+
+            <AccountGoals accountId={effectiveSelectedAccountId} />
           </div>
         )}
       </div>

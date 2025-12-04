@@ -9,7 +9,6 @@ import { createClient } from "@/lib/supabase/server";
 export async function GET() {
   const supabase = await createClient();
 
-  // 1) Usuario actual
   const {
     data: { user },
     error: userError,
@@ -17,37 +16,27 @@ export async function GET() {
 
   if (userError || !user) {
     console.error("GET /movements → no hay usuario autenticado", userError);
-    return NextResponse.json(
-      { error: "No autenticado" },
-      { status: 401 }
-    );
+    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
   }
 
-  // 2) Traer movimientos del usuario
   const { data, error } = await supabase
     .from("movements")
     .select(
       "id, date, account_id, type, category, amount, currency, description, created_at"
     )
-    .eq("user_id", user.id) // redundante con RLS, pero explícito
+    .eq("user_id", user.id)
     .order("date", { ascending: false })
     .order("created_at", { ascending: false });
 
   if (error) {
     console.error("GET /movements → error en Supabase:", error);
     return NextResponse.json(
-      {
-        error: "Error al obtener movimientos",
-        details: error.message,
-      },
+      { error: "Error al obtener movimientos", details: error.message },
       { status: 500 }
     );
   }
 
-  return NextResponse.json(
-    { movements: data ?? [] },
-    { status: 200 }
-  );
+  return NextResponse.json({ movements: data ?? [] }, { status: 200 });
 }
 
 /**
@@ -57,7 +46,6 @@ export async function GET() {
 export async function POST(req: Request) {
   const supabase = await createClient();
 
-  // 1) Usuario actual
   const {
     data: { user },
     error: userError,
@@ -65,10 +53,7 @@ export async function POST(req: Request) {
 
   if (userError || !user) {
     console.error("POST /movements → no hay usuario autenticado", userError);
-    return NextResponse.json(
-      { error: "No autenticado" },
-      { status: 401 }
-    );
+    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
   }
 
   try {
@@ -80,39 +65,37 @@ export async function POST(req: Request) {
       category,
       amount,
       currency,
-      accountId, // por ahora no lo usamos en BD
+      accountId, // id de la cuenta impactada
       description,
     } = body;
 
-    // Validación mínima
     const amountNumber = Number(amount);
-    if (!date || !type || !currency || Number.isNaN(amountNumber)) {
+
+    if (!date || !type || !currency || !accountId || Number.isNaN(amountNumber)) {
       return NextResponse.json(
         { error: "Faltan campos obligatorios" },
         { status: 400 }
       );
     }
 
-    // 2) Mapear tipo del front → BD
+    // Front (ES) -> BD (EN)
     const dbType =
       type === "INGRESO"
         ? "INCOME"
         : type === "GASTO"
         ? "EXPENSE"
-        : type; // fallback por si acaso
+        : type;
 
-    // 3) Insert en movements
     const { data, error } = await supabase
       .from("movements")
       .insert({
-        user_id: user.id, // 🔴 clave
+        user_id: user.id,
         date,
         type: dbType, // "INCOME" | "EXPENSE"
         category: category || null,
         amount: amountNumber,
         currency,
-        // por ahora dejamos la FK sin usar para no romper nada
-        account_id: null, // más adelante podemos usar accountId
+        account_id: accountId, // 👈 AHORA sí lo guardamos
         description: description || null,
       })
       .select()
@@ -131,10 +114,7 @@ export async function POST(req: Request) {
       );
     }
 
-    return NextResponse.json(
-      { ok: true, movement: data },
-      { status: 201 }
-    );
+    return NextResponse.json({ ok: true, movement: data }, { status: 201 });
   } catch (e: any) {
     console.error("POST /movements → error interno:", e);
     return NextResponse.json(
