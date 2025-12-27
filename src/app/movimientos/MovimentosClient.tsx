@@ -38,11 +38,14 @@ export default function MovimientosClient({ initialMovements }: Props) {
   const { deleteMovement } = useAccounts();
 
   // ahora los movimientos vienen del server y los guardamos en estado local
-  const [movements, setMovements] = useState<UIMovement[]>(initialMovements);
+  const [movements, setMovements] =
+    useState<UIMovement[]>(initialMovements);
 
   // Filtros UI
   const [q, setQ] = useState("");
-  const [tipo, setTipo] = useState<"" | "INGRESO" | "GASTO" | "TRANSFER">("");
+  const [tipo, setTipo] = useState<"" | "INGRESO" | "GASTO" | "TRANSFER">(
+    ""
+  );
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
   const [categoria, setCategoria] = useState("");
@@ -212,14 +215,43 @@ export default function MovimientosClient({ initialMovements }: Props) {
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  // Handler eliminar (sincroniza contexto + estado local)
+  // ========= Handler eliminar (sincroniza server + contexto + estado local) =========
   const handleDelete = async (id: string) => {
+    const ok = window.confirm(
+      "¿Seguro que querés eliminar este movimiento?"
+    );
+    if (!ok) return;
+
     try {
-      await deleteMovement(id);
+      const res = await fetch(`/api/movements/${id}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        console.error(
+          "[Movimientos] Error al borrar en servidor:",
+          text
+        );
+        alert("No se pudo eliminar el movimiento en el servidor.");
+        return;
+      }
+
+      // 1) Actualizar contexto (si falla no rompemos la UI)
+      try {
+        await deleteMovement(id);
+      } catch (ctxErr) {
+        console.warn(
+          "[Movimientos] Error sync contexto al borrar:",
+          ctxErr
+        );
+      }
+
+      // 2) Actualizar estado local
       setMovements((prev) => prev.filter((m) => m.id !== id));
     } catch (e) {
-      console.error("Error eliminando movimiento", e);
-      // acá después podemos meter un toast
+      console.error("[Movimientos] Error de red al borrar:", e);
+      alert("Ocurrió un error al intentar borrar el movimiento.");
     }
   };
 
@@ -333,8 +365,8 @@ export default function MovimientosClient({ initialMovements }: Props) {
                 Análisis detallado de ingresos y gastos
               </div>
               <div className="text-xs text-slate-500">
-                Comparación simple de lo que entra y sale cada mes. Los datos se
-                basan en todos los movimientos registrados.
+                Comparación simple de lo que entra y sale cada mes. Los
+                datos se basan en todos los movimientos registrados.
               </div>
             </div>
 
@@ -357,7 +389,10 @@ export default function MovimientosClient({ initialMovements }: Props) {
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={monthlySummary}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="#1f2937"
+                  />
                   <XAxis
                     dataKey="monthLabel"
                     stroke="#94a3b8"
@@ -422,8 +457,9 @@ export default function MovimientosClient({ initialMovements }: Props) {
                     spendingInsight.current.expense >
                       spendingInsight.current.income && (
                       <p className="mt-1 text-rose-400">
-                        El mes pasado tus gastos superaron tus ingresos. Tené
-                        cuidado este mes y revisá tus categorías más fuertes.
+                        El mes pasado tus gastos superaron tus ingresos.
+                        Tené cuidado este mes y revisá tus categorías más
+                        fuertes.
                       </p>
                     )}
                 </>
@@ -459,8 +495,8 @@ export default function MovimientosClient({ initialMovements }: Props) {
                 </>
               ) : (
                 <p className="text-slate-500">
-                  Cuando tengas más gastos registrados podremos decirte en qué
-                  categoría se te está yendo más dinero.
+                  Cuando tengas más gastos registrados podremos decirte
+                  en qué categoría se te está yendo más dinero.
                 </p>
               )}
             </div>
@@ -473,21 +509,22 @@ export default function MovimientosClient({ initialMovements }: Props) {
                 spendingInsight.totalDiff > 0 ? (
                   <p className="text-slate-400">
                     Este mes podrías fijarte un{" "}
-                    <span className="font-semibold">tope mental</span> para la
-                    categoría que más creció y registrar cada gasto ahí. Si ves
-                    que te acercás al valor del mes pasado, frenás a tiempo.
+                    <span className="font-semibold">tope mental</span> para
+                    la categoría que más creció y registrar cada gasto
+                    ahí. Si ves que te acercás al valor del mes pasado,
+                    frenás a tiempo.
                   </p>
                 ) : (
                   <p className="text-slate-400">
-                    Vas bien: tus gastos no vienen por encima del mes anterior.
-                    Aprovechá para mantener este ritmo y reforzar tus hábitos
-                    que funcionaron.
+                    Vas bien: tus gastos no vienen por encima del mes
+                    anterior. Aprovechá para mantener este ritmo y
+                    reforzar tus hábitos que funcionaron.
                   </p>
                 )
               ) : (
                 <p className="text-slate-500">
-                  A medida que registres más meses con datos, acá vas a ver
-                  recomendaciones concretas sobre cómo mejorar.
+                  A medida que registres más meses con datos, acá vas a
+                  ver recomendaciones concretas sobre cómo mejorar.
                 </p>
               )}
             </div>
@@ -521,7 +558,9 @@ export default function MovimientosClient({ initialMovements }: Props) {
         </div>
 
         {filtrados.length === 0 && (
-          <div className="p-6 text-sm text-slate-400">Sin resultados.</div>
+          <div className="p-6 text-sm text-slate-400">
+            Sin resultados.
+          </div>
         )}
 
         {filtrados.map((m) => {
@@ -622,7 +661,8 @@ function Card({
 
 function Badge({ tipo }: { tipo: string }) {
   const map = {
-    INGRESO: "text-emerald-300 bg-emerald-500/10 ring-1 ring-emerald-600/30",
+    INGRESO:
+      "text-emerald-300 bg-emerald-500/10 ring-1 ring-emerald-600/30",
     GASTO: "text-rose-300 bg-rose-500/10 ring-1 ring-rose-600/30",
     TRANSFER: "text-sky-300 bg-sky-500/10 ring-1 ring-sky-600/30",
   } as any;

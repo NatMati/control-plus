@@ -1,32 +1,7 @@
 // src/app/page.tsx
-"use client";
+import { redirect } from "next/navigation";
 
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { supabaseBrowser } from "@/lib/supabaseBrowser";
-
-export default function RootPage() {
-  const router = useRouter();
-
-  useEffect(() => {
-    const checkSession = async () => {
-      const supabase = supabaseBrowser();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      if (!session) {
-        // Sin sesión → al login
-        router.replace("/login");
-      } else {
-        // Con sesión → al dashboard principal
-        router.replace("/resumen");
-      }
-    };
-
-    checkSession();
-  }, [router]);
-
-  // Mientras chequea, no mostramos nada (podríamos poner un loader si querés)
-  return null;
+export default function Home() {
+  // Landing por defecto: tu Resumen (que en realidad es /dashboard)
+  redirect("/dashboard");
 }

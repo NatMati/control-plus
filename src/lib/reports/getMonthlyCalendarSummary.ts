@@ -4,18 +4,20 @@
 import { createClient } from "@/lib/supabase/server";
 
 export type CalendarDaySummary = {
-  day: string;          // fecha (YYYY-MM-DD)
+  day: string; // fecha (YYYY-MM-DD)
   total_income: number;
   total_expense: number;
   net_result: number;
   is_positive: boolean;
 };
 
-const FIXED_USER_ID = "e68c0a6b-b62a-47ed-9c33-3b591c81fb43";
+// Por si querés seguir probando con un usuario fijo cuando no haya sesión
+const FALLBACK_USER_ID = "e68c0a6b-b62a-47ed-9c33-3b591c81fb43";
 
 export async function getMonthlyCalendarSummary(
   year: number,
-  month: number
+  month: number,
+  userId?: string | null
 ): Promise<CalendarDaySummary[]> {
   const supabase = await createClient();
 
@@ -24,21 +26,21 @@ export async function getMonthlyCalendarSummary(
   const lastDay = new Date(year, month, 0).getDate();
   const endDate = `${year}-${monthStr}-${String(lastDay).padStart(2, "0")}`;
 
+  const effectiveUserId = userId ?? FALLBACK_USER_ID;
+
   const { data, error } = await supabase
     .from("v_daily_movements_summary")
     .select("day,total_income,total_expense,net_result,is_positive")
-    .eq("user_id", FIXED_USER_ID)          // 👈 filtro por usuario
+    .eq("user_id", effectiveUserId)
     .gte("day", startDate)
     .lte("day", endDate)
     .order("day", { ascending: true });
 
   if (error) {
     console.error("Error loading monthly calendar:", error);
-    // devolvemos el mes vacío para no romper la página
     return buildEmptyMonth(year, month);
   }
 
-  // Indexamos por fecha para poder rellenar todos los días
   const byDay = new Map<string, CalendarDaySummary>();
   (data ?? []).forEach((row) => {
     const dayStr = row.day as string;

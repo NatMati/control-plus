@@ -2,6 +2,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import MovimientosClient, { type UIMovement } from "./MovimentosClient";
+import ImportCsv from "./ImportCsv";
 
 export default async function MovimientosPage() {
   const supabase = await createClient();
@@ -47,5 +48,13 @@ export default async function MovimientosPage() {
       accountId: m.account_id ?? undefined,
     })) ?? [];
 
-  return <MovimientosClient initialMovements={movements} />;
+  return (
+    <div className="p-6 space-y-4">
+      {/* Importador de CSV */}
+      <ImportCsv />
+
+      {/* Listado / filtros de movimientos */}
+      <MovimientosClient initialMovements={movements} />
+    </div>
+  );
 }

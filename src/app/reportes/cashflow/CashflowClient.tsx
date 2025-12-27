@@ -186,7 +186,7 @@ export default function CashflowClient({ from, to }: Props) {
     return { labels, source, target, value };
   }, [movements]);
 
-  // años para los selects
+  // años para los selects (podés ajustar el rango que quieras)
   const yearOptions = useMemo(() => {
     const current = new Date().getFullYear();
     const years: number[] = [];
@@ -259,41 +259,16 @@ export default function CashflowClient({ from, to }: Props) {
       {loading && (
         <p className="text-sm text-slate-400">Cargando movimientos…</p>
       )}
-
       {error && (
         <p className="text-sm text-red-400">
           Debug: {error}. Verificá que estés logueado.
         </p>
       )}
 
-      {/* Caso: no hay movimientos en el período */}
       {!loading && !error && !movements.length && (
-        <div className="flex items-center justify-center h-64 text-slate-500 text-sm text-center">
-          <div>
-            <p className="font-medium">
-              No hay movimientos registrados en este período.
-            </p>
-            <p className="mt-1 text-slate-400">
-              Agregá ingresos, gastos o transferencias para visualizar tu flujo
-              de dinero.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Caso: hay movimientos pero no se pudo generar el Sankey */}
-      {!loading && !error && movements.length > 0 && !sankeyData && (
-        <div className="flex items-center justify-center h-64 text-slate-500 text-sm text-center">
-          <div>
-            <p className="font-medium">
-              Hay movimientos en este período, pero no se pudo generar el
-              diagrama de flujo.
-            </p>
-            <p className="mt-1 text-slate-400">
-              Esto puede ocurrir cuando no se detecta un flujo claro entre
-              ingresos y gastos, o todos los importes son cero.
-            </p>
-          </div>
+        <div className="flex items-center justify-center h-64 text-slate-500 text-sm">
+          No hay movimientos registrados en este período. Registrá ingresos y
+          gastos para ver tu flujo de dinero.
         </div>
       )}
 

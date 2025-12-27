@@ -1,24 +1,26 @@
 // src/app/movimientos/nuevo/page.tsx
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAccounts } from "@/context/AccountsContext";
 import { useSettings, Currency } from "@/context/SettingsContext";
 
 type UITipoMovimiento = "INGRESO" | "GASTO" | "TRANSFER";
 
+type MovementApiRow = {
+  id: string;
+  type: string;
+  category: string | null;
+};
+
 export default function NuevoMovimientoPage() {
   const router = useRouter();
-  // Ojo: mantengo la firma que ya usás hoy
   const { accounts, addMovement, addAccount } = useAccounts();
   const { currency } = useSettings();
 
-  // 👉 El estado del tipo se mantiene en ESPAÑOL
   const [type, setType] = useState<UITipoMovimiento>("TRANSFER");
-  const [date, setDate] = useState<string>(
-    new Date().toISOString().slice(0, 10)
-  );
+  const [date, setDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [amount, setAmount] = useState<string>("0");
   const [movCurrency, setMovCurrency] = useState<Currency>(currency);
 
@@ -31,16 +33,59 @@ export default function NuevoMovimientoPage() {
   const [newAccName, setNewAccName] = useState<string>("");
   const [newAccCurrency, setNewAccCurrency] = useState<Currency>("USD");
 
-  /**
-   * Alta de NUEVA CUENTA
-   * - chequea duplicados por nombre+moneda
-   * - llama a addAccount (que ya tenés en tu contexto)
-   */
+  // =========================
+  // Categorías (sugerencias)
+  // =========================
+  const [knownCategories, setKnownCategories] = useState<string[]>([]);
+  const [catLoading, setCatLoading] = useState(false);
+
+  // Trae categorías existentes desde /api/movements (tu endpoint ya existe)
+  useEffect(() => {
+    let active = true;
+
+    async function loadCategories() {
+      try {
+        setCatLoading(true);
+        const res = await fetch("/api/movements", { method: "GET" });
+        if (!res.ok) return;
+
+        const json = await res.json();
+        const rows = (json?.movements ?? []) as MovementApiRow[];
+
+        const cats = rows
+          .map((m) => (m.category ?? "").trim())
+          .filter(Boolean);
+
+        const uniq = Array.from(new Set(cats)).sort((a, b) =>
+          a.localeCompare(b, "es")
+        );
+
+        if (active) setKnownCategories(uniq);
+      } catch {
+        // silencioso: si falla, igual podés escribir categoría manual
+      } finally {
+        if (active) setCatLoading(false);
+      }
+    }
+
+    loadCategories();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Opcional: si querés sugerencias distintas según INGRESO/GASTO
+  const categorySuggestions = useMemo(() => {
+    // hoy no filtramos por tipo porque tu DB guarda categorías para ambos
+    // y no estás guardando un catálogo separado por type.
+    // Si después querés, filtramos con más data en API.
+    return knownCategories;
+  }, [knownCategories]);
+
   const addNewAccount = async () => {
     const name = newAccName.trim();
     if (!name) return alert("Ingresá un nombre válido");
 
-    // 🔍 Chequeo de duplicados (mismo nombre + misma moneda, case-insensitive)
     const exists = accounts.some(
       (a) =>
         a.name.trim().toLowerCase() === name.toLowerCase() &&
@@ -49,39 +94,22 @@ export default function NuevoMovimientoPage() {
 
     if (exists) {
       const confirmar = window.confirm(
-        `Ya tenés una cuenta "${name}" en ${newAccCurrency}.\n\n` +
-          "¿Querés crear otra con el mismo nombre?"
+        `Ya tenés una cuenta "${name}" en ${newAccCurrency}.\n\n¿Querés crear otra con el mismo nombre?`
       );
-      if (!confirmar) {
-        return; // el usuario se arrepintió
-      }
+      if (!confirmar) return;
     }
 
-    // Crear en servidor + contexto (según tu implementación actual)
     await addAccount({
       name,
       currency: newAccCurrency,
     });
 
     setNewAccName("");
-
-    // Si era la primera cuenta, actualizar selects básicos
-    if (accounts.length === 0) {
-      setAccountId(accounts[0]?.id || "");
-      setFromId(accounts[0]?.id || "");
-      setToId(accounts[1]?.id || "");
-    }
   };
 
-  /**
-   * Borrado de cuenta:
-   * - llama a /api/accounts/:id (DELETE)
-   * - recarga la página completa para que el contexto se vuelva a hidratar
-   */
   const handleDeleteAccount = async (id: string, name: string) => {
     const ok = window.confirm(
-      `¿Seguro que querés eliminar la cuenta "${name}"?\n\n` +
-        "Si tiene movimientos asociados, el sistema no la dejará borrar."
+      `¿Seguro que querés eliminar la cuenta "${name}"?\n\nSi tiene movimientos asociados, el sistema no la dejará borrar.`
     );
     if (!ok) return;
 
@@ -94,14 +122,11 @@ export default function NuevoMovimientoPage() {
         const text = await res.text();
         console.error("Error al eliminar cuenta:", text);
         alert(
-          "No se pudo eliminar la cuenta. " +
-            "Asegurate de que no tenga movimientos asociados."
+          "No se pudo eliminar la cuenta. Asegurate de que no tenga movimientos asociados."
         );
         return;
       }
 
-      // Recargamos toda la app para que el AccountsProvider
-      // vuelva a leer las cuentas desde Supabase
       window.location.reload();
     } catch (e) {
       console.error(e);
@@ -115,13 +140,12 @@ export default function NuevoMovimientoPage() {
 
     try {
       if (type === "TRANSFER") {
-        // TRANSFER sigue siendo sólo local por ahora
         if (!fromId || !toId || fromId === toId) {
-          return alert("Seleccioná cuentas distintas");
+          return alert("Seleccioná cuentas distintas para la transferencia");
         }
 
         addMovement({
-          type, // "TRANSFER"
+          type,
           date,
           fromId,
           toId,
@@ -129,32 +153,50 @@ export default function NuevoMovimientoPage() {
           currency: movCurrency,
           note,
         });
+
+        const res = await fetch("/api/movements", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            date,
+            type: "TRANSFER",
+            fromAccountId: fromId,
+            toAccountId: toId,
+            amount: amt,
+            currency: movCurrency,
+            description: note,
+          }),
+        });
+
+        if (!res.ok) {
+          console.error("Error al guardar TRANSFER en Supabase", await res.text());
+          alert(
+            "La transferencia se actualizó localmente pero falló al guardarse en el servidor."
+          );
+        }
       } else if (type === "INGRESO" || type === "GASTO") {
         if (!accountId) return alert("Seleccioná cuenta");
 
-        // 1) Actualizar estado local (en español)
+        const cat = category.trim();
+
         addMovement({
-          type, // "INGRESO" | "GASTO"
+          type,
           date,
           accountId,
           amount: amt,
           currency: movCurrency,
-          category,
+          category: cat,
           note,
         });
 
-        // 2) Mapear a inglés SOLO para la BD
-        const dbType = type === "INGRESO" ? "INCOME" : "EXPENSE";
-
-        // 3) Guardar en Supabase → /api/movements
         const res = await fetch("/api/movements", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             date,
             accountId,
-            type: dbType, // "INCOME" | "EXPENSE"
-            category,
+            type, // "INGRESO" | "GASTO" (API lo mapea)
+            category: cat || null,
             amount: amt,
             currency: movCurrency,
             description: note,
@@ -166,6 +208,15 @@ export default function NuevoMovimientoPage() {
           alert(
             "El movimiento se guardó localmente pero falló al guardarse en el servidor."
           );
+        } else {
+          // Si guardó y hay categoría nueva, la agregamos a sugerencias sin recargar
+          if (cat) {
+            setKnownCategories((prev) => {
+              const next = new Set(prev);
+              next.add(cat);
+              return Array.from(next).sort((a, b) => a.localeCompare(b, "es"));
+            });
+          }
         }
       }
 
@@ -211,9 +262,7 @@ export default function NuevoMovimientoPage() {
         </div>
 
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-slate-400">
-            Moneda (del movimiento)
-          </label>
+          <label className="text-xs text-slate-400">Moneda (del movimiento)</label>
           <select
             value={movCurrency}
             onChange={(e) => setMovCurrency(e.target.value as Currency)}
@@ -243,9 +292,7 @@ export default function NuevoMovimientoPage() {
       {type === "TRANSFER" ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
           <div className="flex flex-col">
-            <label className="text-xs text-slate-400">
-              Origen (cuenta que descuenta)
-            </label>
+            <label className="text-xs text-slate-400">Origen (cuenta que descuenta)</label>
             <select
               value={fromId}
               onChange={(e) => setFromId(e.target.value)}
@@ -260,9 +307,7 @@ export default function NuevoMovimientoPage() {
           </div>
 
           <div className="flex flex-col">
-            <label className="text-xs text-slate-400">
-              Destino (cuenta que recibe)
-            </label>
+            <label className="text-xs text-slate-400">Destino (cuenta que recibe)</label>
             <select
               value={toId}
               onChange={(e) => setToId(e.target.value)}
@@ -294,16 +339,31 @@ export default function NuevoMovimientoPage() {
             </select>
           </div>
 
+          {/* Categoría con sugerencias */}
           <div className="flex flex-col">
-            <label className="text-xs text-slate-400">
-              Categoría (opcional)
-            </label>
+            <label className="text-xs text-slate-400">Categoría (opcional)</label>
+
             <input
               value={category}
               onChange={(e) => setCategory(e.target.value)}
               placeholder="Ej.: Sueldo, Comida, Servicios…"
+              list="known-categories"
               className="bg-[#0f1830] border border-slate-700 rounded px-3 py-2"
             />
+
+            <datalist id="known-categories">
+              {categorySuggestions.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+
+            <div className="mt-1 text-[11px] text-slate-500">
+              {catLoading
+                ? "Cargando categorías…"
+                : categorySuggestions.length
+                ? "Podés seleccionar una existente o escribir una nueva."
+                : "Escribí una categoría (se guardará para futuras sugerencias)."}
+            </div>
           </div>
         </div>
       )}
@@ -321,17 +381,15 @@ export default function NuevoMovimientoPage() {
 
       <hr className="my-8 border-slate-800" />
 
-      <h3 className="text-slate-300 text-sm font-medium mb-3">
-        Gestión de bancos y cuentas
-      </h3>
+      <h3 className="text-slate-300 text-sm font-medium mb-3">Gestión de bancos y cuentas</h3>
 
       <div className="border border-slate-800 bg-[#0f1830] rounded-xl p-4 mb-8">
         <p className="text-xs text-slate-400 mb-4 leading-relaxed">
           Usá nombres simples para tus cuentas (ejemplo:
           <span className="italic text-slate-300"> “Banco Itaú”</span>,
           <span className="italic text-slate-300"> “Tarjeta Prex”</span>,
-          <span className="italic text-slate-300"> “Efectivo”</span>). No
-          ingreses números de cuenta, CBU, tarjetas ni datos sensibles.
+          <span className="italic text-slate-300"> “Efectivo”</span>). No ingreses números de cuenta,
+          CBU, tarjetas ni datos sensibles.
         </p>
 
         <div className="flex flex-col md:flex-row gap-3 mb-3">
@@ -363,15 +421,10 @@ export default function NuevoMovimientoPage() {
           </button>
         </div>
 
-        {/* Cuentas guardadas + botón Eliminar */}
         <div className="text-xs text-slate-400 mt-4">
-          <span className="block mb-1 text-slate-300 font-medium">
-            Cuentas guardadas:
-          </span>
+          <span className="block mb-1 text-slate-300 font-medium">Cuentas guardadas:</span>
           {accounts.length === 0 ? (
-            <span className="italic text-slate-500">
-              Todavía no agregaste ninguna cuenta.
-            </span>
+            <span className="italic text-slate-500">Todavía no agregaste ninguna cuenta.</span>
           ) : (
             <ul className="space-y-1">
               {accounts.map((a) => (

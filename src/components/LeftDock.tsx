@@ -6,7 +6,7 @@ import {
   LayoutDashboard,
   Receipt,
   TrendingUp,
-  PiggyBank,
+  Landmark, // 👈 nuevo icono para Cuentas
   Target,
   CreditCard,
   Activity,
@@ -20,14 +20,17 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
-  { href: "/dashboard",           label: "Resumen",     Icon: LayoutDashboard },
-  { href: "/movimientos",         label: "Movimientos", Icon: Receipt },
-  { href: "/inversiones",         label: "Inversiones", Icon: TrendingUp },
-  { href: "/ahorro",              label: "Ahorro",      Icon: PiggyBank },
-  { href: "/presupuestos",        label: "Presupuestos",Icon: Target },
-  { href: "/deudas",              label: "Deudas",      Icon: CreditCard },
-  { href: "/reportes/calendario", label: "Calendario",  Icon: CalendarDays },
-  { href: "/reportes/cashflow",   label: "Cashflow",    Icon: Activity },
+  { href: "/dashboard",           label: "Resumen",      Icon: LayoutDashboard },
+  { href: "/movimientos",         label: "Movimientos",  Icon: Receipt },
+  { href: "/inversiones",         label: "Inversiones",  Icon: TrendingUp },
+
+  // ✅ Antes: /ahorro
+  { href: "/cuentas",             label: "Cuentas",      Icon: Landmark },
+
+  { href: "/presupuestos",        label: "Presupuestos", Icon: Target },
+  { href: "/deudas",              label: "Deudas",       Icon: CreditCard },
+  { href: "/reportes/calendario", label: "Calendario",   Icon: CalendarDays },
+  { href: "/reportes/cashflow",   label: "Cashflow",     Icon: Activity },
 ];
 
 export default function LeftDock() {
@@ -35,18 +38,15 @@ export default function LeftDock() {
 
   return (
     <div className="flex h-full flex-col bg-[#020617]">
-      {/* Header del sidebar – mismo alto que el topnav (h-16) */}
       <div className="flex h-16 items-center border-b border-slate-800 px-4">
         <span className="text-sm font-semibold tracking-tight text-slate-100">
           Control+
         </span>
       </div>
 
-      {/* Navegación principal */}
       <nav className="flex-1 space-y-1 px-3 py-4 overflow-y-auto">
         {navItems.map(({ href, label, Icon }) => {
-          const active =
-            pathname === href || pathname.startsWith(href + "/");
+          const active = pathname === href || pathname.startsWith(href + "/");
 
           return (
             <Link
@@ -66,7 +66,6 @@ export default function LeftDock() {
         })}
       </nav>
 
-      {/* Botón inferior */}
       <div className="border-t border-slate-800 px-3 py-3">
         <Link
           href="/movimientos/nuevo"
