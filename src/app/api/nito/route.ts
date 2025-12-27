@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
-import OpenAI from "openai";
 
-const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-});
+// Evita que Next intente correr esto en Edge (SDK de OpenAI suele requerir Node)
+export const runtime = "nodejs";
 
 // === Tipos básicos para las filas de Supabase ===
 type AccountRow = {
@@ -74,6 +72,7 @@ async function getUserContext(supabase: any, userId: string) {
 // === Endpoint principal de Nito ===
 export async function POST(req: NextRequest) {
   try {
+    // 1) auth
     const supabase = await createClient();
 
     const {
@@ -93,13 +92,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    const body = await req.json();
+    // 2) body
+    const body = await req.json().catch(() => null);
     const message = body?.message;
 
     if (!message || typeof message !== "string") {
       return NextResponse.json({ error: "Mensaje inválido" }, { status: 400 });
     }
 
+    // 3) Validar API key (sin romper build)
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        {
+          error:
+            "OPENAI_API_KEY no está configurada. Configurala en Vercel para habilitar Nito.",
+        },
+        { status: 501 }
+      );
+    }
+
+    // 4) Contexto supabase
     const context = await getUserContext(supabase, user.id);
 
     const userContextSummary = `
@@ -123,6 +136,10 @@ ${context.movements
   .join("\n")}
 `;
 
+    // 5) Lazy import + client dentro del handler (evita crash en build)
+    const OpenAI = (await import("openai")).default;
+    const client = new OpenAI({ apiKey });
+
     const response = await client.chat.completions.create({
       model: "gpt-4.1-mini",
       messages: [
@@ -137,9 +154,9 @@ ${context.movements
       temperature: 0.3,
     });
 
-    const answer = response.choices[0].message.content;
+    const answer = response.choices?.[0]?.message?.content ?? "";
 
-    return NextResponse.json({ answer });
+    return NextResponse.json({ answer }, { status: 200 });
   } catch (e: any) {
     console.error("Error en /api/nito:", e);
     return NextResponse.json(
