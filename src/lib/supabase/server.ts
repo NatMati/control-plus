@@ -16,7 +16,8 @@ function cookieOptionsFromSSR(options?: CookieOptions) {
 }
 
 /* ============================================================
-   1) CLIENTE PARA API ROUTES (NO necesitamos escribir cookies)
+   1) CLIENTE PARA API ROUTES / ROUTE HANDLERS
+   - Puede leer y también setear cookies si el flujo lo requiere
    ============================================================ */
 export async function createApiClient(): Promise<SupabaseClient> {
   const store = await cookies();
@@ -29,9 +30,15 @@ export async function createApiClient(): Promise<SupabaseClient> {
         getAll() {
           return store.getAll().map((c) => ({ name: c.name, value: c.value }));
         },
-        setAll() {
-          // En API routes normalmente no hace falta setear cookies.
-          // Lo dejamos como no-op para no romper.
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              store.set(name, value, cookieOptionsFromSSR(options));
+            });
+          } catch {
+            // En algunos contextos Next no permite setear cookies.
+            // No queremos romper la request por eso.
+          }
         },
       },
     }
@@ -58,7 +65,7 @@ export async function createClient(): Promise<SupabaseClient> {
               store.set(name, value, cookieOptionsFromSSR(options));
             });
           } catch {
-            // En algunos contextos Next no permite setear cookies. OK.
+            // OK
           }
         },
       },

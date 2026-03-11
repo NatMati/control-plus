@@ -1,3 +1,4 @@
+// src/app/api/investments/clear/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
@@ -21,18 +22,12 @@ export async function DELETE() {
 
     if (error) {
       console.error("[investments/clear] DB error:", error);
-      return NextResponse.json(
-        { error: "No se pudo limpiar inversiones." },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Error al limpiar inversiones." }, { status: 500 });
     }
 
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("[investments/clear] Unexpected error:", e);
-    return NextResponse.json(
-      { error: "Error inesperado al limpiar inversiones." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Error inesperado." }, { status: 500 });
   }
 }

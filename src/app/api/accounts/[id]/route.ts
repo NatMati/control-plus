@@ -2,171 +2,179 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
-const ALLOWED_ROLES = new Set(["CHECKING", "SAVINGS", "INVESTMENT"]);
-const ALLOWED_TYPES = new Set(["BANK", "CASH", "WALLET", "BROKER", "OTHER"]);
-const ALLOWED_CURRENCIES = new Set(["UYU", "USD"]);
+type Ctx =
+  | { params: { id: string } }
+  | { params: Promise<{ id: string }> };
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-type PatchBody = Partial<{
-  name: string;
-  currency: string;
-  type: string;
-  role: string;
-  balance: number;
-}>;
-
-export async function PATCH(
-  req: NextRequest,
-  ctx: { params: Promise<{ id: string }> } // Next 15/16
-) {
-  try {
-    const { id } = await ctx.params;
-
-    if (!id || !UUID_RE.test(id)) {
-      return NextResponse.json({ error: "ID inválido" }, { status: 400 });
-    }
-
-    const supabase = await createClient();
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError || !user) {
-      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    }
-
-    let body: PatchBody | null = null;
-    try {
-      body = (await req.json()) as PatchBody;
-    } catch {
-      return NextResponse.json(
-        { error: "Body inválido (JSON requerido)" },
-        { status: 400 }
-      );
-    }
-
-    const update: Record<string, any> = {};
-
-    // name
-    if (body.name !== undefined) {
-      const name = String(body.name ?? "").trim();
-      if (!name) return NextResponse.json({ error: "Nombre requerido" }, { status: 400 });
-      update.name = name;
-    }
-
-    // currency
-    if (body.currency !== undefined) {
-      const currency = String(body.currency ?? "").trim().toUpperCase();
-      if (!ALLOWED_CURRENCIES.has(currency)) {
-        return NextResponse.json({ error: "Moneda inválida" }, { status: 400 });
-      }
-      update.currency = currency;
-    }
-
-    // type
-    if (body.type !== undefined) {
-      const type = String(body.type ?? "").trim().toUpperCase();
-      if (!ALLOWED_TYPES.has(type)) {
-        return NextResponse.json({ error: "Tipo inválido" }, { status: 400 });
-      }
-      update.type = type;
-    }
-
-    // role
-    if (body.role !== undefined) {
-      const role = String(body.role ?? "").trim().toUpperCase();
-      if (!ALLOWED_ROLES.has(role)) {
-        return NextResponse.json({ error: "Rol inválido" }, { status: 400 });
-      }
-      update.role = role;
-    }
-
-    // balance
-    if (body.balance !== undefined) {
-      const balance = Number(body.balance);
-      if (!Number.isFinite(balance)) {
-        return NextResponse.json({ error: "Saldo inválido" }, { status: 400 });
-      }
-      update.balance = balance;
-      update.balance_updated_at = new Date().toISOString();
-    }
-
-    if (Object.keys(update).length === 0) {
-      return NextResponse.json(
-        { error: "No hay campos para actualizar" },
-        { status: 400 }
-      );
-    }
-
-    const { data, error } = await supabase
-      .from("accounts")
-      .update(update)
-      .eq("id", id)
-      .eq("user_id", user.id)
-      .select("id, name, currency, type, role, balance, balance_updated_at, created_at")
-      .single();
-
-    if (error) {
-      return NextResponse.json(
-        {
-          error: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code,
-        },
-        { status: 400 }
-      );
-    }
-
-    return NextResponse.json({ ok: true, account: data }, { status: 200 });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: "Error inesperado", details: e?.message },
-      { status: 500 }
-    );
-  }
+async function getIdFromCtx(ctx: Ctx): Promise<string> {
+  const p: any = (ctx as any).params;
+  const resolved = typeof p?.then === "function" ? await p : p;
+  return resolved?.id;
 }
 
-// (Opcional) DELETE si después querés borrar cuentas desde UI
-export async function DELETE(
-  _req: NextRequest,
-  ctx: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await ctx.params;
+function jsonError(message: string, status: number) {
+  return NextResponse.json({ error: message }, { status });
+}
 
-    if (!id || !UUID_RE.test(id)) {
-      return NextResponse.json({ error: "ID inválido" }, { status: 400 });
-    }
+const ACCOUNT_TYPES = new Set(["BANK", "CASH", "WALLET", "BROKER"]);
+const ACCOUNT_ROLES = new Set(["CHECKING", "SAVINGS", "INVESTMENT"]);
 
-    const supabase = await createClient();
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
+function toUpperStr(v: unknown) {
+  return typeof v === "string" ? v.trim().toUpperCase() : "";
+}
 
-    if (userError || !user) {
-      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
-    }
-
-    const { error } = await supabase
-      .from("accounts")
-      .delete()
-      .eq("id", id)
-      .eq("user_id", user.id);
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-
-    return NextResponse.json({ ok: true }, { status: 200 });
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: "Error inesperado", details: e?.message },
-      { status: 500 }
-    );
+function parseNumber(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number(v.replace(",", "."));
+    if (Number.isFinite(n)) return n;
   }
+  return null;
+}
+
+function parseIsoDateOrNull(v: unknown): string | null | "INVALID" {
+  if (v === null) return null;
+  if (typeof v !== "string") return "INVALID";
+  const s = v.trim();
+  if (!s) return "INVALID";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return "INVALID";
+  // guardamos el string original; supabase lo castea
+  return s;
+}
+
+/**
+ * DELETE = soft delete (archivar)
+ */
+export async function DELETE(req: NextRequest, ctx: Ctx) {
+  const supabase = await createClient();
+
+  const id = await getIdFromCtx(ctx);
+  if (!id) return jsonError("Falta id de cuenta.", 400);
+
+  const { data: auth, error: authErr } = await supabase.auth.getUser();
+  if (authErr || !auth?.user) return jsonError("No autorizado.", 401);
+
+  const { data: account, error: accErr } = await supabase
+    .from("accounts")
+    .select("id,user_id,is_archived")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (accErr) return jsonError(accErr.message, 500);
+  if (!account || account.user_id !== auth.user.id) return jsonError("Cuenta no encontrada.", 404);
+
+  const { error: updErr } = await supabase
+    .from("accounts")
+    .update({ is_archived: true })
+    .eq("id", id)
+    .eq("user_id", auth.user.id);
+
+  if (updErr) return jsonError(updErr.message, 500);
+
+  return NextResponse.json({ ok: true });
+}
+
+/**
+ * PATCH = editar campos permitidos (name/type/role/currency/snapshot)
+ */
+export async function PATCH(req: NextRequest, ctx: Ctx) {
+  const supabase = await createClient();
+
+  const id = await getIdFromCtx(ctx);
+  if (!id) return jsonError("Falta id de cuenta.", 400);
+
+  const { data: auth, error: authErr } = await supabase.auth.getUser();
+  if (authErr || !auth?.user) return jsonError("No autorizado.", 401);
+
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object") return jsonError("Body inválido.", 400);
+
+  // Leemos cuenta actual (ownership + reglas)
+  const { data: current, error: curErr } = await supabase
+    .from("accounts")
+    .select("id,user_id,currency")
+    .eq("id", id)
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+
+  if (curErr) return jsonError(curErr.message, 500);
+  if (!current) return jsonError("Cuenta no encontrada.", 404);
+
+  const patch: Record<string, any> = {};
+
+  // name
+  if ("name" in body) {
+    const name = typeof (body as any).name === "string" ? (body as any).name.trim() : "";
+    if (!name) return jsonError("Nombre inválido.", 400);
+    patch.name = name;
+  }
+
+  // type
+  if ("type" in body) {
+    const type = toUpperStr((body as any).type);
+    if (!ACCOUNT_TYPES.has(type)) return jsonError("Tipo inválido.", 400);
+    patch.type = type;
+  }
+
+  // role
+  if ("role" in body) {
+    const role = toUpperStr((body as any).role);
+    if (!ACCOUNT_ROLES.has(role)) return jsonError("Rol inválido.", 400);
+    patch.role = role;
+  }
+
+  // currency: bloquear si hay movimientos
+  if ("currency" in body) {
+    const nextCurrency = toUpperStr((body as any).currency);
+    if (!nextCurrency) return jsonError("Moneda inválida.", 400);
+
+    if (nextCurrency !== toUpperStr(current.currency)) {
+      const { count, error: cntErr } = await supabase
+        .from("movements")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", auth.user.id)
+        .eq("account_id", id);
+
+      if (cntErr) return jsonError(cntErr.message, 500);
+      if ((count ?? 0) > 0) {
+        return jsonError("No podés cambiar la moneda de una cuenta con movimientos. Creá otra cuenta.", 409);
+      }
+    }
+
+    patch.currency = nextCurrency;
+  }
+
+  // snapshot: balance + balance_updated_at
+  if ("balance" in body) {
+    const n = parseNumber((body as any).balance);
+    if (n === null) return jsonError("Saldo base inválido.", 400);
+    patch.balance = n;
+  }
+
+  if ("balance_updated_at" in body) {
+    const parsed = parseIsoDateOrNull((body as any).balance_updated_at);
+    if (parsed === "INVALID") return jsonError("Fecha de saldo base inválida.", 400);
+    patch.balance_updated_at = parsed; // string ISO o null
+  }
+
+  // Seguridad: no permitimos patch de archivado desde UI
+  if ("is_archived" in body) {
+    return jsonError("Operación no permitida.", 400);
+  }
+
+  if (Object.keys(patch).length === 0) return jsonError("Nada para actualizar.", 400);
+
+  const { data: updated, error: updErr } = await supabase
+    .from("accounts")
+    .update(patch)
+    .eq("id", id)
+    .eq("user_id", auth.user.id)
+    .select("*")
+    .maybeSingle();
+
+  if (updErr) return jsonError(updErr.message, 500);
+  if (!updated) return jsonError("Cuenta no encontrada.", 404);
+
+  return NextResponse.json({ ok: true, account: updated });
 }

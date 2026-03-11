@@ -96,6 +96,28 @@ function normalizeSide(side: unknown): "BUY" | "SELL" | null {
   return null;
 }
 
+function normalizeSymbol(raw: unknown): string {
+  let s = String(raw ?? "").trim().toUpperCase();
+  if (!s) return "";
+
+  // si viene tipo "BINANCE:BTCUSDT" o "NYSE:VOO"
+  if (s.includes(":")) s = s.split(":").pop() || s;
+
+  // si viene "BTC/USD"
+  if (s.includes("/")) s = s.split("/")[0] || s;
+
+  // crypto pares comunes
+  if (s.endsWith("USDT")) s = s.slice(0, -4);
+
+  // "BTC-USD" / "ETH-USD"
+  if (s.endsWith("-USD")) s = s.slice(0, -4);
+
+  // "BTCUSD" (raro, pero por las dudas)
+  if (s.endsWith("USD") && s.length > 3) s = s.slice(0, -3);
+
+  return s.trim().toUpperCase();
+}
+
 function detectDelimiter(headerLine: string): "," | ";" | "\t" {
   const comma = (headerLine.match(/,/g) ?? []).length;
   const semi = (headerLine.match(/;/g) ?? []).length;
@@ -184,12 +206,7 @@ function mapRowToTrade(raw: InvestmentCsvRow, userId: string, idx: number) {
     return null;
   }
 
-  const symbol = String(symbolRaw ?? "")
-    .trim()
-    .toUpperCase()
-    .split(":")
-    .pop()!;
-
+  const symbol = normalizeSymbol(symbolRaw);
   if (!symbol) return null;
 
   return {

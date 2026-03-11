@@ -11,27 +11,37 @@ type CalendarSearchParams = {
 export default async function CalendarReportsPage({
   searchParams,
 }: {
-  // 👇 En tu Next, searchParams viene como Promise
   searchParams: Promise<CalendarSearchParams>;
 }) {
-  // ✅ Lo resolvemos con await
   const sp = await searchParams;
-
   const supabase = await createClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  const { data: { user } } = await supabase.auth.getUser();
   const userId = user?.id ?? null;
 
-  const now = new Date();
+  // Plan del usuario — ajustá el campo según tu tabla de profiles
+  let isPremium = false;
+  if (userId) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("plan")
+      .eq("id", userId)
+      .single();
+    isPremium = profile?.plan === "DELUXE" || profile?.plan === "PREMIUM";
+  }
 
-  const year = sp.year ? Number(sp.year) : now.getFullYear();
+  const now = new Date();
+  const year  = sp.year  ? Number(sp.year)  : now.getFullYear();
   const month = sp.month ? Number(sp.month) : now.getMonth() + 1;
 
-  // 👇 Pasamos también el userId al helper
   const days = await getMonthlyCalendarSummary(year, month, userId);
 
-  return <CalendarClientPage year={year} month={month} days={days} />;
+  return (
+    <CalendarClientPage
+      year={year}
+      month={month}
+      days={days}
+      isPremium={isPremium}
+    />
+  );
 }

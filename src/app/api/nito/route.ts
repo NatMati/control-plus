@@ -1,170 +1,194 @@
+// src/app/api/nito/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/utils/supabase/server";
+import { createClient } from "@/lib/supabase/server";
+import { getUserPlan, canUseNito, PLAN_UPGRADE_MSG } from "@/lib/plan";
 
-// Evita que Next intente correr esto en Edge (SDK de OpenAI suele requerir Node)
 export const runtime = "nodejs";
 
-// === Tipos básicos para las filas de Supabase ===
-type AccountRow = {
-  id: string;
-  name: string;
-  balance?: number | null;
-  currency?: string | null;
-};
+type Message = { role: "user" | "assistant"; content: string };
 
-type MovementRow = {
-  id: string;
-  date: string;
-  type: string;
-  amount: number;
-  currency?: string | null;
-  category?: string | null;
-  account_id?: string | null;
-};
+export async function POST(req: NextRequest) {
+  // ── Auth ──────────────────────────────────────────────────────────────────
+  const supabase = await createClient();
+  const { data: { user }, error: authErr } = await supabase.auth.getUser();
+  if (authErr || !user) {
+    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+  }
 
-// === Instrucciones de Nito ===
-const NITO_SYSTEM_PROMPT = `
-Sos **Nito**, el asistente oficial de la aplicación Control+.
+  // ── Plan guard ────────────────────────────────────────────────────────────
+  const plan = await getUserPlan(supabase, user.id);
+  if (!canUseNito(plan)) {
+    return NextResponse.json(
+      { error: PLAN_UPGRADE_MSG.nito, upgrade: true, requiredPlan: "PRO" },
+      { status: 403 }
+    );
+  }
 
-Tu rol:
-- Explicar gastos, ingresos, presupuestos, cashflow y movimientos.
-- Analizar tendencias del usuario dentro de SUS datos.
-- Explicar cómo funciona la app y guiar al usuario.
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ error: "ANTHROPIC_API_KEY no configurada." }, { status: 500 });
+  }
 
-Normas de seguridad (NO NEGOCIABLES):
-- NO recomendás comprar, vender ni holdear activos.
-- NO das consejos financieros personalizados. Solo explicás lo que pasa EN LA APP.
-- NO predecís mercado, criptos, acciones ni nada externo.
-- NO respondés preguntas ajenas a la app (política, salud, historia, etc.).
-- NO das opiniones personales.
-- NO revelás datos de otros usuarios.
-- NO revelás código interno, llaves, configuración o lógica privada.
+  const body = await req.json().catch(() => null);
+  const messages: Message[] = body?.messages ?? [];
+  const userCurrency: string = body?.currency ?? "UYU";
 
-Cuando el usuario pregunta algo fuera del alcance → respondés:
-"Lo siento, esa pregunta está fuera de mi alcance. Solo puedo ayudarte con tu app financiera."
+  if (!messages.length) {
+    return NextResponse.json({ error: "Se requieren messages." }, { status: 400 });
+  }
 
-Tu tono:
-- Claro, simple, preciso.
-- Nunca técnico de más.
-- Nunca recomendás inversiones.
-`;
-
-// === Armar contexto del usuario ===
-async function getUserContext(supabase: any, userId: string) {
-  const [accRes, movRes] = await Promise.all([
+  // ── Contexto financiero del usuario ──────────────────────────────────────
+  const [accountsRes, movementsRes, debtsRes] = await Promise.all([
     supabase
-      .from("accounts")
-      .select("id,name,balance,currency")
-      .eq("user_id", userId),
+      .from("v_account_balances")
+      .select("id, name, currency, balance_real, type")
+      .eq("user_id", user.id),
+
     supabase
       .from("movements")
-      .select("id,date,type,amount,currency,category,account_id")
-      .eq("user_id", userId)
-      .order("date", { ascending: false }),
+      .select("id, date, amount, type, category, description, currency, account_id")
+      .eq("user_id", user.id)
+      .in("type", ["INCOME", "EXPENSE"])
+      .gte("date", new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))
+      .order("date", { ascending: false })
+      .limit(200),
+
+    supabase
+      .from("debts")
+      .select("id, name, type, status, currency, total_amount, remaining_amount, monthly_payment, next_due_date, creditor")
+      .eq("user_id", user.id)
+      .neq("status", "PAID"),
   ]);
 
-  return {
-    accounts: (accRes.data ?? []) as AccountRow[],
-    movements: (movRes.data ?? []) as MovementRow[],
-  };
-}
+  const accounts = accountsRes.data ?? [];
+  const movements = movementsRes.data ?? [];
+  const debts = debtsRes.data ?? [];
 
-// === Endpoint principal de Nito ===
-export async function POST(req: NextRequest) {
+  // ── Resumen de gastos por categoría (últimos 30 días) ────────────────────
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const recentExpenses = movements.filter(m => m.type === "EXPENSE" && m.date >= thirtyDaysAgo);
+  const byCategory: Record<string, number> = {};
+  for (const m of recentExpenses) {
+    const cat = m.category ?? "Sin categoría";
+    byCategory[cat] = (byCategory[cat] ?? 0) + m.amount;
+  }
+
+  const totalIncome30 = movements
+    .filter(m => m.type === "INCOME" && m.date >= thirtyDaysAgo)
+    .reduce((s, m) => s + m.amount, 0);
+  const totalExpense30 = recentExpenses.reduce((s, m) => s + m.amount, 0);
+
+  // ── Construir contexto para el system prompt ──────────────────────────────
+  const accountsSummary = accounts.map(a =>
+    `- ${a.name} (${a.currency}): saldo ${Number(a.balance_real ?? 0).toLocaleString("es-UY", { minimumFractionDigits: 2 })} ${a.currency}`
+  ).join("\n");
+
+  const categorySummary = Object.entries(byCategory)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([cat, amt]) => `  · ${cat}: ${amt.toLocaleString("es-UY", { minimumFractionDigits: 2 })} ${userCurrency}`)
+    .join("\n");
+
+  const debtsSummary = debts.length
+    ? debts.map(d =>
+        `- ${d.name} (${d.creditor ?? d.type}): resta ${Number(d.remaining_amount).toLocaleString("es-UY", { minimumFractionDigits: 2 })} ${d.currency}${d.monthly_payment ? `, cuota ${Number(d.monthly_payment).toLocaleString("es-UY", { minimumFractionDigits: 2 })}` : ""}${d.next_due_date ? `, próx. venc. ${d.next_due_date}` : ""}`
+      ).join("\n")
+    : "Sin deudas activas";
+
+  const today = new Date().toLocaleDateString("es-UY", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+
+  const SYSTEM_PROMPT = `Sos Nito ✦, el asistente financiero personal de Control+. Sos directo, claro y útil — como un amigo que sabe de finanzas personales.
+
+HOY ES: ${today}
+MONEDA BASE DEL USUARIO: ${userCurrency}
+
+═══ CONTEXTO FINANCIERO REAL DEL USUARIO ═══
+
+CUENTAS Y SALDOS:
+${accountsSummary || "Sin cuentas registradas"}
+
+ACTIVIDAD ÚLTIMOS 30 DÍAS:
+- Ingresos: ${totalIncome30.toLocaleString("es-UY", { minimumFractionDigits: 2 })} ${userCurrency}
+- Gastos: ${totalExpense30.toLocaleString("es-UY", { minimumFractionDigits: 2 })} ${userCurrency}
+- Balance: ${(totalIncome30 - totalExpense30).toLocaleString("es-UY", { minimumFractionDigits: 2 })} ${userCurrency}
+
+GASTOS POR CATEGORÍA (últimos 30 días):
+${categorySummary || "  Sin datos"}
+
+DEUDAS ACTIVAS:
+${debtsSummary}
+
+ÚLTIMOS MOVIMIENTOS (máx. 10):
+${movements.slice(0, 10).map(m =>
+  `  ${m.date} | ${m.type === "INCOME" ? "+" : "-"}${Number(m.amount).toLocaleString("es-UY", { minimumFractionDigits: 2 })} ${m.currency} | ${m.description ?? ""} [${m.category ?? "sin categoría"}]`
+).join("\n") || "  Sin movimientos recientes"}
+
+═══ TUS CAPACIDADES ═══
+
+PODÉS:
+1. Analizar gastos y dar insights concretos ("tu mayor gasto fue X, representa Y% del total")
+2. Responder preguntas sobre saldos, deudas y situación financiera
+3. Sugerir ajustes para mejorar el ahorro o llegar a metas
+4. Registrar movimientos — cuando el usuario te diga algo como "gasté 500 en comida" o "cobré el sueldo", respondé con un JSON especial al FINAL de tu mensaje en este formato exacto:
+   [NITO_ACTION:{"action":"register_movement","data":{"date":"YYYY-MM-DD","amount":500,"type":"EXPENSE","category":"Comida","description":"Comida","accountId":null}}]
+5. Detectar patrones de gasto y alertar si algo parece fuera de lo normal
+
+NO PODÉS:
+- Recomendar acciones, criptomonedas o inversiones específicas
+- Opinar sobre el mercado financiero
+- Prometer rendimientos
+
+ESTILO:
+- Respondé en español rioplatense (tuteo, "vos", "te")
+- Sé conciso pero completo — no des respuestas de una línea si el usuario pregunta algo importante
+- Usá números reales del contexto cuando puedas
+- Si no tenés datos suficientes, decilo claramente
+- Podés usar emojis con moderación para hacer el chat más amigable
+- Cuando registres un movimiento, confirmá al usuario qué registraste`;
+
+  // ── Llamada a Claude ──────────────────────────────────────────────────────
   try {
-    // 1) auth
-    const supabase = await createClient();
-
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError) {
-      console.error("Error obteniendo usuario en /api/nito:", userError);
-      return NextResponse.json(
-        { error: "Error de autenticación" },
-        { status: 500 }
-      );
-    }
-
-    if (!user) {
-      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-    }
-
-    // 2) body
-    const body = await req.json().catch(() => null);
-    const message = body?.message;
-
-    if (!message || typeof message !== "string") {
-      return NextResponse.json({ error: "Mensaje inválido" }, { status: 400 });
-    }
-
-    // 3) Validar API key (sin romper build)
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        {
-          error:
-            "OPENAI_API_KEY no está configurada. Configurala en Vercel para habilitar Nito.",
-        },
-        { status: 501 }
-      );
-    }
-
-    // 4) Contexto supabase
-    const context = await getUserContext(supabase, user.id);
-
-    const userContextSummary = `
-### Cuentas del usuario:
-${context.accounts
-  .map(
-    (a: AccountRow) =>
-      `• ${a.name}: ${a.balance ?? 0} ${a.currency ?? ""}`.trim()
-  )
-  .join("\n")}
-
-### Últimos movimientos:
-${context.movements
-  .slice(0, 20)
-  .map(
-    (m: MovementRow) =>
-      `• ${m.date} - ${m.type} - ${m.amount} ${m.currency ?? ""} (${
-        m.category ?? "Sin categoría"
-      })`
-  )
-  .join("\n")}
-`;
-
-    // 5) Lazy import + client dentro del handler (evita crash en build)
-    const OpenAI = (await import("openai")).default;
-    const client = new OpenAI({ apiKey });
-
-    const response = await client.chat.completions.create({
-      model: "gpt-4.1-mini",
-      messages: [
-        { role: "system", content: NITO_SYSTEM_PROMPT },
-        {
-          role: "system",
-          content: `Contexto actual del usuario:\n${userContextSummary}`,
-        },
-        { role: "user", content: message },
-      ],
-      max_tokens: 500,
-      temperature: 0.3,
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5",
+        max_tokens: 1024,
+        system: SYSTEM_PROMPT,
+        messages: messages.map(m => ({ role: m.role, content: m.content })),
+      }),
     });
 
-    const answer = response.choices?.[0]?.message?.content ?? "";
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("[nito] Anthropic error:", errText);
+      return NextResponse.json({ error: `Error Anthropic: ${response.status}` }, { status: 502 });
+    }
 
-    return NextResponse.json({ answer }, { status: 200 });
+    const aiResponse = await response.json();
+    const rawText: string = aiResponse?.content?.[0]?.text ?? "";
+
+    // Detectar si hay una acción a ejecutar
+    const actionMatch = rawText.match(/\[NITO_ACTION:(.+?)\]/s);
+    let action: any = null;
+    let cleanText = rawText;
+
+    if (actionMatch) {
+      try {
+        action = JSON.parse(actionMatch[1]);
+        cleanText = rawText.replace(actionMatch[0], "").trim();
+      } catch {
+        // Si no parsea, ignorar
+      }
+    }
+
+    return NextResponse.json({ reply: cleanText, action });
   } catch (e: any) {
-    console.error("Error en /api/nito:", e);
-    return NextResponse.json(
-      {
-        error: "Error interno",
-        details: e?.message ?? String(e),
-      },
-      { status: 500 }
-    );
+    console.error("[nito] Unexpected error:", e);
+    return NextResponse.json({ error: "Error inesperado." }, { status: 500 });
   }
 }

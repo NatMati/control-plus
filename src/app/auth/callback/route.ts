@@ -22,6 +22,6 @@ export async function GET(request: Request) {
     );
   }
 
-  // Sesión OK -> home (o /resumen, lo que uses)
-  return NextResponse.redirect(new URL("/", requestUrl.origin));
+  // Sesión OK -> dashboard
+  return NextResponse.redirect(new URL("/dashboard", requestUrl.origin));
 }

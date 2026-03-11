@@ -1,14 +1,18 @@
+// src/app/reportes/calendario/page.client.tsx
 import MonthYearSelector from "@/components/MonthYearSelector";
 import MonthlyCalendarGrid from "./MonthlyCalendarGrid";
+import { type CalendarDaySummary } from "@/lib/reports/getMonthlyCalendarSummary";
 
 export default function CalendarClientPage({
   days,
   year,
   month,
+  isPremium = false,
 }: {
-  days: any[];
+  days: CalendarDaySummary[];
   year: number;
   month: number;
+  isPremium?: boolean;
 }) {
   return (
     <div className="space-y-6">
@@ -19,11 +23,15 @@ export default function CalendarClientPage({
             Resumen diario de ingresos y gastos para {month}/{year}.
           </p>
         </div>
-
         <MonthYearSelector year={year} month={month} />
       </header>
 
-      <MonthlyCalendarGrid days={days} />
+      <MonthlyCalendarGrid
+        days={days}
+        year={year}
+        month={month}
+        isPremium={isPremium}
+      />
     </div>
   );
 }

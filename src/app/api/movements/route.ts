@@ -1,6 +1,10 @@
-// src/app/api/movements/route.ts
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createApiClient } from "@/lib/supabase/server";
+import { getUserPlan, movementsLimit, PLAN_UPGRADE_MSG } from "@/lib/plan";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 function normalizeCategory(input: unknown): string | null {
   if (typeof input !== "string") return null;
@@ -8,8 +12,14 @@ function normalizeCategory(input: unknown): string | null {
   return trimmed.length ? trimmed : null;
 }
 
+function normalizeText(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const t = input.trim();
+  return t.length ? t : null;
+}
+
 export async function GET() {
-  const supabase = await createClient();
+  const supabase = await createApiClient();
 
   const {
     data: { user },
@@ -36,11 +46,13 @@ export async function GET() {
     );
   }
 
-  return NextResponse.json({ movements: data ?? [] }, { status: 200 });
+  const res = NextResponse.json({ movements: data ?? [] }, { status: 200 });
+  res.headers.set("Cache-Control", "no-store");
+  return res;
 }
 
 export async function POST(req: Request) {
-  const supabase = await createClient();
+  const supabase = await createApiClient();
 
   const {
     data: { user },
@@ -52,27 +64,49 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "No autenticado" }, { status: 401 });
   }
 
+  // ── Plan guard — límite de movimientos FREE ───────────────────────────────
+  const plan = await getUserPlan(supabase, user.id);
+  const limit = movementsLimit(plan);
+  if (limit !== null) {
+    const now = new Date();
+    const firstOfMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const { count } = await supabase
+      .from("movements")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .gte("created_at", firstOfMonth);
+
+    if ((count ?? 0) >= limit) {
+      return NextResponse.json(
+        { error: PLAN_UPGRADE_MSG.movements, upgrade: true, requiredPlan: "PRO" },
+        { status: 403 }
+      );
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   try {
     const body = await req.json();
 
-    const {
-      date,
-      type, // "INGRESO" | "GASTO" | "TRANSFER" | "INCOME" | "EXPENSE"
-      amount,
-      currency,
-      accountId,
-      fromAccountId,
-      toAccountId,
-      description,
-    } = body ?? {};
+    const date = body?.date;
+    const type = body?.type;
+    const amountNumber = Number(body?.amount);
+    const currency = body?.currency;
 
-    // 👇 tolerancia a distintos nombres del front
+    const accountId = body?.accountId ?? body?.account_id ?? null;
+
+    const fromAccountId = body?.fromAccountId ?? null;
+    const toAccountId = body?.toAccountId ?? null;
+
     const category =
       normalizeCategory(body?.category) ??
       normalizeCategory(body?.categoria) ??
       normalizeCategory(body?.categoryName);
 
-    const amountNumber = Number(amount);
+    const description =
+      normalizeText(body?.description) ??
+      normalizeText(body?.note) ??
+      normalizeText(body?.nota);
 
     if (!date || !type || !currency || Number.isNaN(amountNumber)) {
       return NextResponse.json(
@@ -81,7 +115,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Caso 1: TRANSFER
     if (type === "TRANSFER") {
       if (!fromAccountId || !toAccountId || fromAccountId === toAccountId) {
         return NextResponse.json(
@@ -101,7 +134,7 @@ export async function POST(req: Request) {
             amount: -Math.abs(amountNumber),
             currency,
             account_id: fromAccountId,
-            description: description || null,
+            description,
           },
           {
             user_id: user.id,
@@ -111,7 +144,7 @@ export async function POST(req: Request) {
             amount: Math.abs(amountNumber),
             currency,
             account_id: toAccountId,
-            description: description || null,
+            description,
           },
         ])
         .select();
@@ -127,7 +160,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, movements: data }, { status: 201 });
     }
 
-    // Caso 2: INCOME / EXPENSE
     if (!accountId) {
       return NextResponse.json(
         { error: "accountId es obligatorio para ingresos/gastos" },
@@ -135,7 +167,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Normalizar type a DB
     let dbType: "INCOME" | "EXPENSE";
     if (type === "INGRESO" || type === "INCOME") dbType = "INCOME";
     else if (type === "GASTO" || type === "EXPENSE") dbType = "EXPENSE";
@@ -150,11 +181,11 @@ export async function POST(req: Request) {
       user_id: user.id,
       date,
       type: dbType,
-      category, // 👈 ya normalizada
+      category,
       amount: amountNumber,
       currency,
       account_id: accountId,
-      description: description || null,
+      description,
     };
 
     const { data, error } = await supabase

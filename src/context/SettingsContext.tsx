@@ -10,58 +10,47 @@ export type SettingsCtx = {
   // Moneda
   currency: Currency;
   setCurrency: (c: Currency) => void;
-  /** Convierte montos entre monedas */
   convert: (n: number, opts?: { from?: Currency; to?: Currency }) => number;
-  /**
-   * Formatea un monto que YA está expresado en la moneda indicada.
-   * Si no se pasa `currency`, usa la moneda seleccionada en el panel.
-   */
   format: (n: number, opts?: { currency?: Currency }) => string;
+
+  // Tasas (expuestas para que otros hooks/componentes puedan leerlas)
+  rates: Record<Currency, number>;
+  ratesLoading: boolean;
+  ratesUpdatedAt: string | null; // "YYYY-MM-DD" o null
 
   // Idioma
   lang: Lang;
   setLang: (l: Lang) => void;
-  /** Traducción por clave */
   t: (key: string) => string;
 };
 
-/* ===== Locales por idioma (para separadores, símbolo, etc.) ===== */
+/* ===== Locales ===== */
 const LOCALE_BY_LANG: Record<Lang, string> = {
   ES: "es-UY",
   EN: "en-US",
   PT: "pt-BR",
 };
 
-/* ===== Traducciones usadas en tu UI ===== */
+/* ===== Traducciones ===== */
 const MESSAGES: Record<Lang, Record<string, string>> = {
   ES: {
     "app.title": "Control+",
     "btn.add": "Agregar",
-
-    // Tabs
     "tabs.acciones": "Acciones",
     "tabs.etfs": "ETFs",
     "tabs.cripto": "Cripto",
     "tabs.bonos": "Bonos",
     "tabs.metales": "Metales",
-
-    // Cards
     "cards.assets": "Activos",
     "cards.total": "Total",
     "cards.gain": "Ganancia",
     "cards.loss": "Pérdida",
-
-    // Dashboard / comunes
     "recent.assets": "Activos recientes",
     "search.placeholder": "Buscar...",
     "nav.assets": "Activos",
-
-    // Inversiones (hoja /inversiones)
     "investments.portfolioChartTitle": "Evolución del portafolio",
     "investments.allocationTitle": "Distribución por tipo de activo",
     "investments.tableTitle": "Detalle de inversiones",
-
-    // Plazo fijo / renta fija
     "fixed.title": "Simulador de plazo fijo",
     "fixed.startDate": "Inicio del plazo",
     "fixed.principal": "Capital inicial",
@@ -71,35 +60,24 @@ const MESSAGES: Record<Lang, Record<string, string>> = {
     "fixed.finalAmount": "Monto estimado al final:",
     "fixed.gain": "Ganancia total:",
   },
-
   EN: {
     "app.title": "Control+",
     "btn.add": "Add",
-
-    // Tabs
     "tabs.acciones": "Stocks",
     "tabs.etfs": "ETFs",
     "tabs.cripto": "Crypto",
     "tabs.bonos": "Bonds",
     "tabs.metales": "Metals",
-
-    // Cards
     "cards.assets": "Assets",
     "cards.total": "Total",
     "cards.gain": "Gain",
     "cards.loss": "Loss",
-
-    // Common
     "recent.assets": "Recent assets",
     "search.placeholder": "Search...",
     "nav.assets": "Assets",
-
-    // Investments page
     "investments.portfolioChartTitle": "Portfolio evolution",
     "investments.allocationTitle": "Asset allocation",
     "investments.tableTitle": "Investment details",
-
-    // Fixed-term / fixed income
     "fixed.title": "Fixed-term simulator",
     "fixed.startDate": "Start date",
     "fixed.principal": "Initial capital",
@@ -109,35 +87,24 @@ const MESSAGES: Record<Lang, Record<string, string>> = {
     "fixed.finalAmount": "Estimated final amount:",
     "fixed.gain": "Total gain:",
   },
-
   PT: {
     "app.title": "Control+",
     "btn.add": "Adicionar",
-
-    // Tabs
     "tabs.acciones": "Ações",
     "tabs.etfs": "ETFs",
     "tabs.cripto": "Cripto",
     "tabs.bonos": "Títulos",
     "tabs.metales": "Metais",
-
-    // Cards
     "cards.assets": "Ativos",
     "cards.total": "Total",
     "cards.gain": "Ganho",
     "cards.loss": "Perda",
-
-    // Common
     "recent.assets": "Ativos recentes",
     "search.placeholder": "Buscar...",
     "nav.assets": "Ativos",
-
-    // Investments page
     "investments.portfolioChartTitle": "Evolução da carteira",
     "investments.allocationTitle": "Distribuição por tipo de ativo",
     "investments.tableTitle": "Detalhe dos investimentos",
-
-    // Fixed-term / renda fixa
     "fixed.title": "Simulador de renda fixa",
     "fixed.startDate": "Início do prazo",
     "fixed.principal": "Capital inicial",
@@ -149,7 +116,7 @@ const MESSAGES: Record<Lang, Record<string, string>> = {
   },
 };
 
-/* ===== Tasas base (fallback) relativas a USD ===== */
+/* ===== Fallback estático ===== */
 const DEFAULT_RATES: Record<Currency, number> = {
   USD: 1,
   EUR: 0.92,
@@ -158,152 +125,147 @@ const DEFAULT_RATES: Record<Currency, number> = {
   BRL: 5.5,
 };
 
+/* ===== Caché ===== */
+const CACHE_KEY = "ctrl_fx_v2"; // v2 = nuevo formato con open.er-api
+const API_URL   = "https://open.er-api.com/v6/latest/USD";
+
+type CacheEntry = {
+  rates: Record<Currency, number>;
+  date: string; // "YYYY-MM-DD"
+};
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+function loadCache(): CacheEntry | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const parsed: CacheEntry = JSON.parse(raw);
+    if (parsed.date !== todayISO()) return null; // expirado
+    return parsed;
+  } catch { return null; }
+}
+function saveCache(rates: Record<Currency, number>) {
+  try {
+    const entry: CacheEntry = { rates, date: todayISO() };
+    localStorage.setItem(CACHE_KEY, JSON.stringify(entry));
+  } catch {}
+}
+
+/* ===== Context ===== */
 const Ctx = createContext<SettingsCtx | null>(null);
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
-  /* ===== estado de moneda ===== */
-  const [currency, setCurrencyState] = useState<Currency>("USD");
 
+  /* ── Moneda ── */
+  const [currency, setCurrencyState] = useState<Currency>("USD");
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("ctrl_currency") as Currency | null;
-      if (saved) setCurrencyState(saved);
+      const s = localStorage.getItem("ctrl_currency") as Currency | null;
+      if (s) setCurrencyState(s);
     } catch {}
   }, []);
-
   const setCurrency = (c: Currency) => {
     setCurrencyState(c);
-    try {
-      localStorage.setItem("ctrl_currency", c);
-    } catch {}
+    try { localStorage.setItem("ctrl_currency", c); } catch {}
   };
 
-  /* ===== idioma ===== */
+  /* ── Idioma ── */
   const [lang, setLangState] = useState<Lang>("ES");
-
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("ctrl_lang") as Lang | null;
-      if (saved) setLangState(saved);
+      const s = localStorage.getItem("ctrl_lang") as Lang | null;
+      if (s) setLangState(s);
     } catch {}
   }, []);
-
   const setLang = (l: Lang) => {
     setLangState(l);
-    try {
-      localStorage.setItem("ctrl_lang", l);
-    } catch {}
+    try { localStorage.setItem("ctrl_lang", l); } catch {}
   };
 
-  /* ===== Tasas dinámicas (USD -> otras) ===== */
-  const [rates, setRates] = useState<Record<Currency, number>>(DEFAULT_RATES);
-  const [lastRatesAt, setLastRatesAt] = useState<number | null>(null);
+  /* ── Tasas FX ── */
+  const [rates, setRates]               = useState<Record<Currency, number>>(DEFAULT_RATES);
+  const [ratesLoading, setRatesLoading] = useState(true);
+  const [ratesUpdatedAt, setUpdatedAt]  = useState<string | null>(null);
 
-  // Carga inicial desde localStorage (si existe)
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("ctrl_fx");
-      if (raw) {
-        const parsed = JSON.parse(raw) as {
-          rates: Record<Currency, number>;
-          at: number;
+    // 1. Intentar caché del día
+    const cached = loadCache();
+    if (cached) {
+      setRates(cached.rates);
+      setUpdatedAt(cached.date);
+      setRatesLoading(false);
+      return;
+    }
+
+    // 2. Fetch fresco desde open.er-api.com
+    (async () => {
+      try {
+        const res  = await fetch(API_URL);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        if (json.result !== "success") throw new Error("API error");
+
+        const api = json.rates as Record<string, number>;
+        const next: Record<Currency, number> = {
+          USD: 1,
+          EUR: api.EUR ?? DEFAULT_RATES.EUR,
+          UYU: api.UYU ?? DEFAULT_RATES.UYU,
+          ARS: api.ARS ?? DEFAULT_RATES.ARS,
+          BRL: api.BRL ?? DEFAULT_RATES.BRL,
         };
-        if (parsed?.rates && parsed?.at) {
-          setRates({ ...parsed.rates, USD: 1 });
-          setLastRatesAt(parsed.at);
-        }
+
+        saveCache(next);
+        setRates(next);
+        setUpdatedAt(todayISO());
+      } catch {
+        // Fallback silencioso — usamos DEFAULT_RATES ya seteados
+        setUpdatedAt(null);
+      } finally {
+        setRatesLoading(false);
       }
-    } catch {}
+    })();
   }, []);
 
-  // Descarga desde API pública (exchangerate.host)
-  const refreshRates = async () => {
-    try {
-      const url =
-        "https://api.exchangerate.host/latest?base=USD&symbols=EUR,UYU,ARS,BRL";
-      const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) throw new Error("Bad response");
-      const json = await res.json();
-      const apiRates = json?.rates as Record<string, number> | undefined;
-      if (!apiRates) throw new Error("No rates");
-
-      const next: Record<Currency, number> = {
-        USD: 1,
-        EUR: apiRates.EUR ?? DEFAULT_RATES.EUR,
-        UYU: apiRates.UYU ?? DEFAULT_RATES.UYU,
-        ARS: apiRates.ARS ?? DEFAULT_RATES.ARS,
-        BRL: apiRates.BRL ?? DEFAULT_RATES.BRL,
-      };
-
-      setRates(next);
-      console.log("💱 Tasas actualizadas:", next);
-      const at = Date.now();
-      setLastRatesAt(at);
-      localStorage.setItem("ctrl_fx", JSON.stringify({ rates: next, at }));
-    } catch {
-      // Si falla, seguimos con DEFAULT_RATES silenciosamente
+  /* ── Funciones derivadas ── */
+  const convert = useMemo(() => (
+    (n: number, opts?: { from?: Currency; to?: Currency }) => {
+      const from = opts?.from ?? "USD";
+      const to   = opts?.to   ?? currency;
+      if (from === to) return n;
+      return (n / (rates[from] || 1)) * (rates[to] || 1);
     }
-  };
+  ), [currency, rates]);
 
-  // Refresco inicial si pasaron >12h y refresco periódico cada 6h
-  useEffect(() => {
-    const TWELVE_HOURS = 12 * 60 * 60 * 1000;
-    const stale = !lastRatesAt || Date.now() - lastRatesAt > TWELVE_HOURS;
-    if (stale) refreshRates();
-    const id = setInterval(refreshRates, 6 * 60 * 60 * 1000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastRatesAt]);
+  const format = useMemo(() => (
+    (n: number, opts?: { currency?: Currency }) => {
+      const cur = opts?.currency ?? currency;
+      return new Intl.NumberFormat(LOCALE_BY_LANG[lang] || "es-UY", {
+        style: "currency", currency: cur, maximumFractionDigits: 2,
+      }).format(n);
+    }
+  ), [currency, lang]);
 
-  /* ===== traducción ===== */
   const t = useMemo(() => {
     const dict = MESSAGES[lang] ?? {};
     return (key: string) => dict[key] ?? key;
   }, [lang]);
 
-  /* ===== conversión (usa tasas dinámicas) ===== */
-  const convert = useMemo(() => {
-    return (n: number, opts?: { from?: Currency; to?: Currency }) => {
-      const from = opts?.from ?? "USD";
-      const to = opts?.to ?? currency;
-      const inUsd = n / (rates[from] || 1); // a USD
-      return inUsd * (rates[to] || 1); // de USD a destino
-    };
-  }, [currency, rates]);
-
-  /* ===== formato (NO convierte, solo formatea) ===== */
-  const format = useMemo(() => {
-    return (n: number, opts?: { currency?: Currency }) => {
-      const cur = opts?.currency ?? currency;
-
-      return new Intl.NumberFormat(LOCALE_BY_LANG[lang] || "es-UY", {
-        style: "currency",
-        currency: cur,
-        maximumFractionDigits: 2,
-      }).format(n);
-    };
-  }, [currency, lang]);
-
-  const value: SettingsCtx = useMemo(
-    () => ({
-      currency,
-      setCurrency,
-      convert,
-      format,
-      lang,
-      setLang,
-      t,
-    }),
-    [currency, lang, convert, format]
-  );
+  const value: SettingsCtx = useMemo(() => ({
+    currency, setCurrency,
+    convert, format,
+    rates, ratesLoading, ratesUpdatedAt,
+    lang, setLang,
+    t,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [currency, lang, convert, format, rates, ratesLoading, ratesUpdatedAt]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function useSettings(): SettingsCtx {
   const ctx = useContext(Ctx);
-  if (!ctx) {
-    throw new Error("useSettings must be used within SettingsProvider");
-  }
+  if (!ctx) throw new Error("useSettings must be used within SettingsProvider");
   return ctx;
 }
